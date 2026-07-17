@@ -291,7 +291,7 @@ test_set_one_host_marginal() {
 }
 
 
-test_set_all_host_marginal() {
+test_set_all_marginal() {
 	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
@@ -307,24 +307,127 @@ test_set_one_non_optimized_online() {
 	# First set one non-optimized online to online then check optimized paths
 	local next_marginal=0
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if ! subsys_path_optimized "$subsys_path"; then
+		if ! _rport_optimized "$subsys_path"; then
 			if [ $next_marginal == 1 ]; then
-				fc_check "$subsys_path" Marginal || return 1
+				_rport_check "$subsys_path" Marginal || return 1
 				break
 			fi
-			fc_rport_set_online "$(subsys_path_get_fc_rport "$subsys_path")"
-			fc_check "$subsys_path" Online || return 1
+			_rport_set_online "$subsys_path" || return 1
+			_rport_check "$subsys_path" Online || return 1
 			next_marginal=1
 		fi
 	done
 	# Check optimized paths
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if subsys_path_optimized "$subsys_path"; then
+		if _rport_optimized "$subsys_path"; then
 			# Optimized paths will not be in use
-			fc_check_opt "$subsys_path" Marginal || return 1
+			_rport_check_opt "$subsys_path" Marginal || return 1
 		fi
 	done
 }
+
+test_set_all_non_optimized_online() {
+	local IOPOLICY=$1 # "numa" "queue-depth" "round-robin"
+	local -a RPORTS_PATHS=( $2 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+
+	# Set all non-optimized online
+	local numa_in_use=0
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if _rport_optimized "$subsys_path"; then
+			_rport_check "$subsys_path" Marginal || return 1
+		else
+			_rport_set_online "$subsys_path" || return 1
+			if [ "$IOPOLICY" == "numa" ] && [ $numa_in_use == 0 ]; then
+				_rport_check "$subsys_path" Online || return 1
+				numa_in_use=1
+			elif [ "$IOPOLICY" == "numa" ] && [ $numa_in_use == 1 ]; then
+				_rport_check_online "$subsys_path" Online || return 1
+				# Only one of the online paths should be in use
+				_rport_check_use "$subsys_path" Marginal || return 1
+			else
+				_rport_check "$subsys_path" Online || return 1
+			fi
+		fi
+	done
+}
+
+set_one_optimized_online() {
+	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# Set one optimized online
+	local next_marginal=0
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if _rport_optimized "$subsys_path"; then
+			if [ $next_marginal == 1 ]; then
+				_rport_check "$subsys_path" Marginal || return 1
+				break
+			fi
+			_rport_set_online "$subsys_path" || return 1
+			_rport_check "$subsys_path" Online || return 1
+			next_marginal=1
+		fi
+	done
+}
+
+test_set_all_non_one_optimized_online() {
+	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# Set one optimized online
+	# First set one optimized online to online then check non-optimized paths
+	set_one_optimized_online "${RPORTS_PATHS[*]}" || return 1
+
+	# Check non-optimized paths
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if ! _rport_optimized "$subsys_path"; then
+			# Only optimized paths will be in use
+			_rport_check_opt "$subsys_path" Online || return 1
+		fi
+	done
+}
+
+
+test_set_one_optimized_online() {
+	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# Set one optimized online
+	# First set one optimized online to online then check non-optimized paths
+	set_one_optimized_online "${RPORTS_PATHS[*]}" || return 1
+
+	# Check non-optimized paths
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if ! _rport_optimized "$subsys_path"; then
+			# Only optimized paths will be in use
+			_rport_check_opt "$subsys_path" Marginal || return 1
+		fi
+	done
+}
+
+test_set_two_optimized_online() {
+	local IOPOLICY=$1 # "numa" "queue-depth" "round-robin"
+	local -a RPORTS_PATHS=( $2 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# Set two optimized online
+	local numa_in_use=0
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if _rport_optimized "$subsys_path"; then
+			_rport_set_online "$subsys_path" || return 1
+			if [ "$IOPOLICY" == "numa" ] && [ $numa_in_use == 0 ]; then
+				_rport_check "$subsys_path" Online || return 1
+				numa_in_use=1
+			elif [ "$IOPOLICY" == "numa" ] && [ $numa_in_use == 1 ]; then
+				_rport_check_online "$subsys_path" Online || return 1
+				# Only one of the online paths should be in use
+				_rport_check_use "$subsys_path" Marginal || return 1
+			else
+				_rport_check "$subsys_path" Online || return 1
+			fi
+		else
+			_rport_check "$subsys_path" Marginal || return 1
+		fi
+	done
+}
+
 
 run_test() {
 	local IOPOLICY=$1 # "numa" "queue-depth" "round-robin"
@@ -337,30 +440,19 @@ run_test() {
 	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "Set all online: pass" || echo "Set all online: fail"
 
 	test_set_one_host_marginal "${RPORTS_HOSTS[0]}" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" && echo "One host marginal: pass" || echo "One host marginal: fail"
-	test_set_all_host_marginal "${RPORTS_PATHS[*]}" && echo "All marginal: pass" || echo "All marginal: fail"
+	test_set_all_marginal "${RPORTS_PATHS[*]}" && echo "All marginal: pass" || echo "All marginal: fail"
 
 	test_set_one_non_optimized_online "${RPORTS_PATHS[*]}" && echo "One remote non-optimized online: pass" || echo "One remote non-optimized online: fail"
-	#test_set_two_non_optimized_online "$SUBSYS" "$IOPOLICY" "${FC_HOSTS[@]}" && echo "Two remote non-optimized online: pass" || echo "Two remote non-optimized online: fail"
+	test_set_all_non_optimized_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "Two remote non-optimized online: pass" || echo "Two remote non-optimized online: fail"
 
-	#test_set_two_non_one_optimized_online "$SUBSYS" "${FC_HOSTS[@]}" && echo "Two remote non-optimized, One remote optimized: pass" || echo "Two remote non-optimized, One remote optimized: fail"
+	test_set_all_non_one_optimized_online "${RPORTS_PATHS[*]}" && echo "Two remote non-optimized, One remote optimized: pass" || echo "Two remote non-optimized, One remote optimized: fail"
+	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "Set all online: pass" || echo "Set all online: fail"
 
-	#test_set_all_online "$SUBSYS" "$IOPOLICY" "${FC_HOSTS[@]}" && echo "All online: pass" || echo "All online: fail"
+	test_set_all_marginal "${RPORTS_PATHS[*]}" && echo "All marginal: pass" || echo "All marginal: fail"
 
-
-	# Set one optimized online
-	#send_fpin_link_integrity_event "$(get_fc_host_port_id "${FC_HOSTS[0]}")" "$FPINTYPE" || err=1
-	#if [[ $err != 0 ]]; then
-	#	echo "Failed to send FPIN event on ${FC_HOSTS[0]}"
-	#	err=0
-	#fi
-	#send_fpin_link_integrity_event "$(get_fc_host_port_id "${FC_HOSTS[1]}")" "$FPINTYPE" || err=1
-	#if [[ $err != 0 ]]; then
-	#	echo "Failed to send FPIN event on ${FC_HOSTS[1]}"
-	#	err=0
-	#fi
-	#test_set_one_optimized_online "$SUBSYS" "${FC_HOSTS[@]}" && echo "One remote optimized online: pass" || echo "One remote optimized online: fail"
-	#test_set_two_optimized_online "$SUBSYS" "$IOPOLICY" "${FC_HOSTS[@]}" && echo "Two remote optimized online: pass" || echo "Two remote optimized online: fail"
-	#test_set_all_online "$SUBSYS" "$IOPOLICY" "${FC_HOSTS[@]}" && echo "All online: pass" || echo "All online: fail"
+	test_set_one_optimized_online "${RPORTS_PATHS[*]}" && echo "One remote optimized online: pass" || echo "One remote optimized online: fail"
+	test_set_two_optimized_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "Two remote optimized online: pass" || echo "Two remote optimized online: fail"
+	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "All online: pass" || echo "All online: fail"
 }
 
 do_test() {
