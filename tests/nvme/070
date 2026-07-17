@@ -258,7 +258,7 @@ test_set_all_online() {
 	local -a RPORTS_PATHS=( $2 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		_rport_set_online "$subsys_path"
+		_rport_set_online "$subsys_path" || return 1
 		_rport_check_online "$subsys_path" Online || return 1
 	done
 
@@ -273,16 +273,57 @@ test_set_all_online() {
 }
 
 test_set_one_host_marginal() {
-	local HOST=$2 # host1
-	local -a RPORTS_PATHS=( $3 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
-	local -a RPORTS_HOSTS=( $4 ) # host1 host2
+	local HOST=$1 # host1
+	local -a RPORTS_PATHS=( $2 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+	local -a RPORTS_HOSTS=( $3 ) # host1 host2
 
 	for subsys_path in $(matching_vals "$HOST" "${RPORTS_HOSTS[*]}" "${RPORTS_PATHS[*]}"); do
-		_rport_set_marginal "$subsys_path" "$STATE"
+		_rport_set_marginal "$subsys_path" || return 1
 	done
 
-	_rport_check_host Marginal "$HOST" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" || return 1
-	_rport_check_host Online "$HOST" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" || return 1
+	for host in "${RPORTS_HOSTS[@]}"; do
+		if [[ "$host" == "$HOST" ]]; then
+			_rport_check_host Marginal "$host" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" || return 1
+		else
+			_rport_check_host Online "$host" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" || return 1
+		fi
+	done
+}
+
+
+test_set_all_host_marginal() {
+	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		_rport_set_marginal "$subsys_path" || return 1
+		_rport_check_opt "$subsys_path" Marginal || return 1
+	done
+}
+
+test_set_one_non_optimized_online() {
+	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# Set one non-optimized online
+	# First set one non-optimized online to online then check optimized paths
+	local next_marginal=0
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if ! subsys_path_optimized "$subsys_path"; then
+			if [ $next_marginal == 1 ]; then
+				fc_check "$subsys_path" Marginal || return 1
+				break
+			fi
+			fc_rport_set_online "$(subsys_path_get_fc_rport "$subsys_path")"
+			fc_check "$subsys_path" Online || return 1
+			next_marginal=1
+		fi
+	done
+	# Check optimized paths
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if subsys_path_optimized "$subsys_path"; then
+			# Optimized paths will not be in use
+			fc_check_opt "$subsys_path" Marginal || return 1
+		fi
+	done
 }
 
 run_test() {
@@ -295,10 +336,10 @@ run_test() {
 	# Initial check to see if FC is operational and set ports to online
 	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "Set all online: pass" || echo "Set all online: fail"
 
-	#test_set_one_host_marginal "$SUBSYS" "$FPINTYPE" "${FC_HOSTS[@]}" && echo "One host marginal: pass" || echo "One host marginal: fail"
-	#test_set_two_host_marginal "$SUBSYS" "$FPINTYPE" "${FC_HOSTS[@]}" && echo "Two hosts marginal: pass" || echo "Two hosts marginal: fail"
+	test_set_one_host_marginal "${RPORTS_HOSTS[0]}" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" && echo "One host marginal: pass" || echo "One host marginal: fail"
+	test_set_all_host_marginal "${RPORTS_PATHS[*]}" && echo "All marginal: pass" || echo "All marginal: fail"
 
-	#test_set_one_non_optimized_online "$SUBSYS" "${FC_HOSTS[@]}" && echo "One remote non-optimized online: pass" || echo "One remote non-optimized online: fail"
+	test_set_one_non_optimized_online "${RPORTS_PATHS[*]}" && echo "One remote non-optimized online: pass" || echo "One remote non-optimized online: fail"
 	#test_set_two_non_optimized_online "$SUBSYS" "$IOPOLICY" "${FC_HOSTS[@]}" && echo "Two remote non-optimized online: pass" || echo "Two remote non-optimized online: fail"
 
 	#test_set_two_non_one_optimized_online "$SUBSYS" "${FC_HOSTS[@]}" && echo "Two remote non-optimized, One remote optimized: pass" || echo "Two remote non-optimized, One remote optimized: fail"
