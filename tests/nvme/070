@@ -544,8 +544,8 @@ test() {
 
 	_setup_nvmet 2
 
-	_nvmet_target_setup --ports 2 --host_port 0
-	_nvmet_target_setup --ports 2 --host_port 1
+	_nvmet_target_setup --ports 2
+	_nvmet_target_add_ports --host_port 1 --ports 2
 
 	_get_nvmet_ports "${def_subsysnqn}" ports
 

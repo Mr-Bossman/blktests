@@ -30,7 +30,7 @@ NVMET_CFS="/sys/kernel/config/nvmet"
 NVMET_DFS="/sys/kernel/debug/nvmet"
 nvme_trtype=${nvme_trtype:-}
 nvme_adrfam=${nvme_adrfam:-}
-hosts=()
+declare -ag ports_2_hosts
 
 # TMPDIR can not be referred out of test() or test_device() context. Instead of
 # global variable def_flie_path, use this getter function.
@@ -191,7 +191,7 @@ _cleanup_nvmet() {
 		name=$(basename "${port}")
 		echo "WARNING: Test did not clean up port: ${name}"
 		if [[ "${nvme_trtype}" == "fc" ]]; then
-			host_port="${hosts[${name}]}"
+			host_port="${ports_2_hosts[${name}]}"
 			_nvme_fcloop_del_rport "$(_host_wwnn "$host_port")" \
 					       "$(_host_wwpn "$host_port")" \
 					       "$(_remote_wwnn "$name")" \
@@ -628,7 +628,6 @@ _create_nvmet_port() {
 		traddr="${port}"
 		adrfam="loop"
 	elif [[ "${trtype}" == "fc" ]]; then
-		hosts["${port}"]="${host_port}"
 		_nvme_fcloop_add_tport "$(_remote_wwnn $port)" \
 				       "$(_remote_wwpn $port)"
 		_nvme_fcloop_add_rport "$(_host_wwnn $host_port)" \
@@ -695,7 +694,7 @@ _setup_nvmet_port_ana() {
 
 _remove_nvmet_port() {
 	local port="$1"
-	local host_port="${hosts[${port}]}"
+	local host_port="${ports_2_hosts[${port}]}"
 	local cfsport="${NVMET_CFS}/ports/${port}"
 	local a
 
@@ -982,17 +981,17 @@ _get_nvmet_ports() {
 _get_fc_host_port() {
 	local -i port=${1}
 
-	echo "${hosts[${port}]}"
+	echo "${ports_2_hosts[${port}]}"
 }
 
 _get_fc_host_ports() {
-	 printf "%s\n" "${ports[@]}" | sort -u
+	 printf "%s\n" "${ports_2_hosts[@]}" | sort -u
 }
 
 _get_nvmet_port_params() {
 	local port="$1"
 	local -n args="$2"
-	local host_port="${hosts[${port}]}"
+	local host_port="${ports_2_hosts[${port}]}"
 	local cfs_path="${NVMET_CFS}/ports/${port}"
 	local trtype="${nvme_trtype}"
 	local traddr
@@ -1170,11 +1169,57 @@ _nvmet_target_setup() {
 	p=0
 	while (( p < num_ports )); do
 		port="$(_create_nvmet_port ${tls} ${host_port})"
+		ports_2_hosts["${port}"]="${host_port}"
 		_add_nvmet_subsys_to_port "${port}" "${subsysnqn}"
 		p=$(( p + 1 ))
 	done
 	_create_nvmet_host "${subsysnqn}" "${def_hostnqn}" \
 			"${hostkey}" "${ctrlkey}"
+}
+
+_nvmet_target_add_ports() {
+	local subsysnqn="${def_subsysnqn}"
+	local port p
+	local num_ports=1
+	local host_port=0
+	local tls="none"
+
+	while [[ $# -gt 0 ]]; do
+		case $1 in
+			--subsysnqn)
+				subsysnqn="$2"
+				shift 2
+				;;
+			--ports)
+				num_ports="$2"
+				shift 2
+				;;
+			--host_port)
+				host_port="$2"
+				shift 2
+				;;
+			--tls)
+				tls="not-required"
+				shift 1
+				;;
+			--force-tls)
+				tls="required"
+				shift 1
+				;;
+			*)
+				echo "WARNING: unknown argument: $1"
+				shift
+				;;
+		esac
+	done
+
+	p=0
+	while (( p < num_ports )); do
+		port="$(_create_nvmet_port ${tls} ${host_port})"
+		ports_2_hosts["${port}"]="${host_port}"
+		_add_nvmet_subsys_to_port "${port}" "${subsysnqn}"
+		p=$(( p + 1 ))
+	done
 }
 
 _nvmet_target_cleanup() {
