@@ -90,6 +90,15 @@ _subsys_get_port() {
 	# a number representing the port number, e.g. 0, 1, 2, 3
 }
 
+_rport_set_iopolicy() {
+	local RPORT=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+	local POLICY=$2 # numa queue-depth round-robin
+
+	echo "$POLICY" | sudo tee "$RPORT"/iopolicy > /dev/null
+	# Returns none
+}
+
+
 _rport_set_marginal() {
 	local RPORT=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 
@@ -243,7 +252,7 @@ _rport_check_one_use_online() {
 		# One of the online paths should be in use
 		# "!" inverts the return code, so returns false if path is in use,
 		# running the return statement
-		! _rport_check_use "$subsys_path" || return 0
+		! _rport_in_use "$subsys_path" || return 0
 	done
 
 	echo No FC ports are being used, expected atleast one in use when all are online in numa mode.
@@ -290,14 +299,34 @@ test_set_one_host_marginal() {
 	done
 }
 
+# Check if one of the marginal paths is in use
+_rport_check_one_use_marginal() {
+	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# Check if one of the marginal paths is in use
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		_rport_check_online "$subsys_path" Marginal
+		# One of the marginal paths should be in use
+		# "!" inverts the return code, so returns false if path is in use,
+		# running the return statement
+		! _rport_in_use "$subsys_path" || return 0
+	done
+
+	echo No FC ports are being used, expected one in use when all are marginal.
+	# None of the marginal paths were in use
+	return 1
+
+	# Returns Success or Fail
+}
 
 test_set_all_marginal() {
 	local -a RPORTS_PATHS=( $1 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
 		_rport_set_marginal "$subsys_path" || return 1
-		_rport_check_opt "$subsys_path" Marginal || return 1
 	done
+
+	_rport_check_one_use_marginal "${RPORTS_PATHS[@]}"
 }
 
 test_set_one_non_optimized_online() {
@@ -433,7 +462,6 @@ run_test() {
 	local IOPOLICY=$1 # "numa" "queue-depth" "round-robin"
 	local -a RPORTS_PATHS=( $2 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 	local -a RPORTS_HOSTS=( $3 ) # host1 host2
-	local err=0
 
 	echo Changing FC links to online
 	# Initial check to see if FC is operational and set ports to online
@@ -455,44 +483,98 @@ run_test() {
 	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "All online: pass" || echo "All online: fail"
 }
 
-do_test() {
-	local nvmedev="$1"
-	local ns="$2"
-	local port=0
+run_tests() {
+	#local DEVPATH=$1 # /dev/nvme3n1
+	#local DEVNAME
+	#local DEV_SUBSYS
+	#local SUBSYS
+	local SUBSYS_PATH=$(_find_nvme_subsys "${def_subsysnqn}")
+	local RPORTS_PATHS=$(_find_nvme_devs "${def_subsysnqn}")
+	local RPORTS_HOSTS=( "host1" "host1" "host1" "host1" )
+
+	#DEVNAME=$(basename "$DEVPATH") # nvme3n1
+	#DEV_SUBSYS=$(printf "%s\n" "$PATH_SYSFS_NVME_SUBSYSTEM"/*/* | grep "$DEVNAME") # /sys/class/nvme-subsystem/nvme-subsys3/nvme3n1
+	#SUBSYS=$(dirname "$DEV_SUBSYS") # /sys/class/nvme-subsystem/nvme-subsys3
+
+	#FPINTYPES="unknown link_failure loss_sync loss_signal primitive_error itw crc dev_specific"
+	local FPINTYPES="crc"
+	local IOPOLICYS="numa queue-depth round-robin"
+	for IOPOLICY in $IOPOLICYS; do
+		_rport_set_iopolicy "$SUBSYS_PATH" "$IOPOLICY"
+		for FPINTYPE in $FPINTYPES; do
+			echo "Testing fpin type: $FPINTYPE with iopolicy: $IOPOLICY"
+			run_test "$IOPOLICY" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}"
+		done
+	done
+}
+
+_find_nvme_devs() {
+	local subsys=$1
+	local subsysnqn
+	local dev
+	for dev in /sys/class/nvme/nvme*; do
+		[ -e "$dev" ] || continue
+		subsysnqn="$(cat "${dev}/subsysnqn" 2>/dev/null)"
+		if [[ "$subsysnqn" == "$subsys" ]]; then
+			echo "$dev"
+		fi
+	done
+}
+
+_find_nvme_subsys() {
+	local subsys=$1
+	local subsysnqn
+	local subsys_path
+	for subsys_path in /sys/class/nvme-subsystem/nvme-subsys*; do
+		[ -e "$subsys_path" ] || continue
+		subsysnqn="$(cat "${subsys_path}/subsysnqn" 2>/dev/null)"
+		if [[ "$subsysnqn" == "$subsys" ]]; then
+			echo "$subsys_path"
+		fi
+	done
+}
+
+test() {
+	local nvmedev
+	local -a ports
+	local ns
 	local fio_pid
 
-	# Verify initial controller state is online
-	#_wait_for_ctrl_state "$nvmedev" "live" 0 || { echo "FAIL: Controller unexpectedly started as not online."; return 1; }
+	echo "Running ${TEST_NAME}"
 
-	# Start background I/O
+	_setup_nvmet 2
+
+	_nvmet_target_setup --ports 2 --host_port 0
+	_nvmet_target_setup --ports 2 --host_port 1
+
+	_get_nvmet_ports "${def_subsysnqn}" ports
+
+	for port in "${ports[@]}"; do
+		if [[ $(_get_fc_host_port ${port}) == 0 ]]; then
+			_setup_nvmet_port_ana "${port}" 1 "optimized"
+		else
+			_setup_nvmet_port_ana "${port}" 1 "non-optimized"
+		fi
+	done
+
+	for port in "${ports[@]}"; do
+		_nvme_connect_subsys --port "${port}" --no-wait-ns
+	done
+
+	# start fio job
+	ns=$(_find_nvme_ns "$def_subsys_uuid")
 	echo "Starting background I/O"
 	_run_fio_verify_io --filename="/dev/${ns}" \
 			   --group_reporting --ramp_time=5 \
 			   --time_based --runtime=1m &> "$FULL" &
 	fio_pid=$!
 	sleep 5
-	local RPORTS_PATHS=/sys/class/nvme/${nvmedev}
-	local RPORTS_HOSTS=host1
-	run_test round-robin "$RPORTS_PATHS" "$RPORTS_HOSTS"
+
+	run_tests
+
 	# Stop background I/O
 	echo "Stopping background I/O"
 	{ kill "$fio_pid"; wait; } &> /dev/null
-}
-
-test() {
-	local nvmedev
-	local ns
-
-	echo "Running ${TEST_NAME}"
-
-	_setup_nvmet
-
-	_nvmet_target_setup --ports 1
-
-	_nvme_connect_subsys
-	nvmedev=$(_find_nvme_dev "${def_subsysnqn}")
-
-	do_test "$nvmedev" "$ns"
 
 	_nvme_disconnect_subsys
 	_nvmet_target_cleanup

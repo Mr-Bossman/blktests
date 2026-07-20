@@ -30,6 +30,7 @@ NVMET_CFS="/sys/kernel/config/nvmet"
 NVMET_DFS="/sys/kernel/debug/nvmet"
 nvme_trtype=${nvme_trtype:-}
 nvme_adrfam=${nvme_adrfam:-}
+hosts=()
 
 # TMPDIR can not be referred out of test() or test_device() context. Instead of
 # global variable def_flie_path, use this getter function.
@@ -159,6 +160,7 @@ _cleanup_nvmet() {
 	local subsys
 	local transport
 	local name
+	local host_port
 
 	if [[ ! -d "${NVMET_CFS}" ]]; then
 		return 0
@@ -189,7 +191,9 @@ _cleanup_nvmet() {
 		name=$(basename "${port}")
 		echo "WARNING: Test did not clean up port: ${name}"
 		if [[ "${nvme_trtype}" == "fc" ]]; then
-			_nvme_fcloop_del_rport "${def_local_wwnn}" "${def_local_wwpn}" \
+			host_port="${hosts[${name}]}"
+			_nvme_fcloop_del_rport "$(_host_wwnn "$host_port")" \
+					       "$(_host_wwpn "$host_port")" \
 					       "$(_remote_wwnn "$name")" \
 					       "$(_remote_wwpn "$name")"
 			_nvme_fcloop_del_tport "$(_remote_wwnn "$name")" \
@@ -221,7 +225,10 @@ _cleanup_nvmet() {
 	trap SIGINT
 
 	if [[ "${nvme_trtype}" == "fc" ]]; then
-		_nvme_fcloop_del_lport "${def_local_wwnn}" "${def_local_wwpn}"
+		for host_port in "$(_get_fc_host_ports)"; do
+			_nvme_fcloop_del_lport "$(_host_wwnn "$host_port")" \
+					       "$(_host_wwpn "$host_port")"
+		done
 	fi
 	if [[ "${nvme_trtype}" == "rdma" ]]; then
 		stop_soft_rdma
@@ -231,6 +238,7 @@ _cleanup_nvmet() {
 }
 
 _setup_nvmet() {
+	local -i host_ports=${1:-1}
 	_register_test_cleanup _cleanup_nvmet
 
 	if [[ -n "${nvme_target_control}" ]]; then
@@ -267,7 +275,9 @@ _setup_nvmet() {
 	fi
 	if [[ "${nvme_trtype}" = "fc" ]]; then
 		_load_module nvme-fcloop
-		_nvme_fcloop_add_lport "${def_local_wwnn}" "${def_local_wwpn}"
+		for ((i = 0; i < host_ports; i++)); do
+			_nvme_fcloop_add_lport "$(_host_wwnn "$i")" "$(_host_wwpn "$i")"
+		done
 	fi
 }
 
@@ -572,16 +582,31 @@ _remote_wwpn() {
 	printf "0x%08x" $(( def_remote_wwpn + port ))
 }
 
+_host_wwnn() {
+	local -i port=${1}
+
+	printf "0x%08x" $(( def_local_wwnn + port ))
+}
+
+_host_wwpn() {
+	local -i port=${1}
+
+	printf "0x%08x" $(( def_local_wwpn + port ))
+}
+
 _fc_traddr() {
 	printf "nn-%s:pn-%s" "$(_remote_wwnn "$1")" "$(_remote_wwpn "$1")"
 }
 
 _fc_host_traddr() {
-	printf "nn-%s:pn-%s" "$def_local_wwnn" "$def_local_wwpn"
+	local -i port=${1:-0}
+
+	printf "nn-%s:pn-%s" "$(_host_wwnn $port)" "$(_host_wwpn $port)"
 }
 
 _create_nvmet_port() {
 	local tls="${1:-none}"
+	local host_port="${2:-0}"
 	local trtype="${nvme_trtype}"
 	local traddr="${def_traddr}"
 	local adrfam="${def_adrfam}"
@@ -603,9 +628,11 @@ _create_nvmet_port() {
 		traddr="${port}"
 		adrfam="loop"
 	elif [[ "${trtype}" == "fc" ]]; then
+		hosts["${port}"]="${host_port}"
 		_nvme_fcloop_add_tport "$(_remote_wwnn $port)" \
 				       "$(_remote_wwpn $port)"
-		_nvme_fcloop_add_rport "$def_local_wwnn" "$def_local_wwpn" \
+		_nvme_fcloop_add_rport "$(_host_wwnn $host_port)" \
+				       "$(_host_wwpn $host_port)" \
 				       "$(_remote_wwnn $port)" \
 				       "$(_remote_wwpn $port)"
 		traddr=$(_fc_traddr $port)
@@ -668,13 +695,15 @@ _setup_nvmet_port_ana() {
 
 _remove_nvmet_port() {
 	local port="$1"
+	local host_port="${hosts[${port}]}"
 	local cfsport="${NVMET_CFS}/ports/${port}"
 	local a
 
 	if [[ "${nvme_trtype}" == "fc" ]]; then
 		_nvme_fcloop_del_tport "$(_remote_wwnn "$port")" \
 				       "$(_remote_wwpn "$port")"
-		_nvme_fcloop_del_rport "$def_local_wwnn" "$def_local_wwpn" \
+		_nvme_fcloop_del_rport "$(_host_wwnn "$host_port")" \
+				       "$(_host_wwpn "$host_port")" \
 				       "$(_remote_wwnn "$port")" \
 				       "$(_remote_wwpn "$port")"
 	fi
@@ -950,9 +979,20 @@ _get_nvmet_ports() {
 	done
 }
 
+_get_fc_host_port() {
+	local -i port=${1}
+
+	echo "${hosts[${port}]}"
+}
+
+_get_fc_host_ports() {
+	 printf "%s\n" "${ports[@]}" | sort -u
+}
+
 _get_nvmet_port_params() {
 	local port="$1"
 	local -n args="$2"
+	local host_port="${hosts[${port}]}"
 	local cfs_path="${NVMET_CFS}/ports/${port}"
 	local trtype="${nvme_trtype}"
 	local traddr
@@ -982,7 +1022,7 @@ _get_nvmet_port_params() {
 		;;
 	fc)
 		args+=(--traddr "$(_fc_traddr "$port")")
-		args+=(--host-traddr "$(_fc_host_traddr "$port")")
+		args+=(--host-traddr "$(_fc_host_traddr "$host_port")")
 		;;
 	*)
 		echo Unexpected transport type: "${trtype}"
@@ -1037,6 +1077,7 @@ _nvmet_target_setup() {
 	local port p
 	local resv_enable=""
 	local num_ports=1
+	local host_port=0
 	local tls="none"
 	local -a ARGS
 
@@ -1068,6 +1109,10 @@ _nvmet_target_setup() {
 				;;
 			--ports)
 				num_ports="$2"
+				shift 2
+				;;
+			--host_port)
+				host_port="$2"
 				shift 2
 				;;
 			--tls)
@@ -1124,7 +1169,7 @@ _nvmet_target_setup() {
 
 	p=0
 	while (( p < num_ports )); do
-		port="$(_create_nvmet_port ${tls})"
+		port="$(_create_nvmet_port ${tls} ${host_port})"
 		_add_nvmet_subsys_to_port "${port}" "${subsysnqn}"
 		p=$(( p + 1 ))
 	done
