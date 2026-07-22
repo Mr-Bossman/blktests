@@ -125,19 +125,6 @@ _rport_check_use() {
 	# Returns Success or Fail
 }
 
-# check if link is in use if optimized
-_rport_check_use_opt() {
-	local RPORT=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
-
-	# Only optimized paths will be in use
-	if _rport_optimized "$RPORT"; then
-		_rport_check_use "$RPORT" Online
-	else
-		_rport_check_use "$RPORT" Marginal
-	fi
-	# Returns Success or Fail
-}
-
 # check if all link is in state and use state if optimized
 _rport_check_opt() {
 	local RPORT=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
@@ -160,29 +147,6 @@ _rport_check() {
 
 	_rport_check_online "$RPORT" "$STATE"
 	_rport_check_use "$RPORT" "$STATE"
-	# Returns Success or Fail
-}
-
-matching_vals() {
-	local value=$1
-	local -a KEYS=( $2 )
-	local -a VALS=( $3 )
-
-	for i in "${!KEYS[@]}"; do
-		[[ "${VALS[i]}" == "$value" ]] && echo "${KEYS[i]}" || true
-	done
-}
-
-# check if all links are of expected state on host
-_rport_check_host() {
-	local STATE=$1 # "Online"
-	local HOST=$2 # host1
-	local -a RPORTS_PATHS=( $3 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
-	local -a RPORTS_HOSTS=( $4 ) # host1 host2
-
-	for subsys_path in $(matching_vals "$HOST" "${RPORTS_HOSTS[*]}" "${RPORTS_PATHS[*]}"); do
-		_rport_check_opt "$subsys_path" "$STATE"
-	done
 	# Returns Success or Fail
 }
 
@@ -229,18 +193,25 @@ test_set_all_online() {
 
 test_set_one_host_marginal() {
 	local HOST=$1 # host1
-	local -a RPORTS_PATHS=( $2 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
-	local -a RPORTS_HOSTS=( $3 ) # host1 host2
+	shift
+	local RPORTS_CNT="$(( $# / 2 ))"
+	local PATHS_POS # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+	local HOSTS_POS # host1 host2
 
-	for subsys_path in $(matching_vals "$HOST" "${RPORTS_HOSTS[*]}" "${RPORTS_PATHS[*]}"); do
-		_rport_set_marginal "$subsys_path" || return 1
+	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
+		HOSTS_POS="$(( RPORTS_CNT + PATHS_POS ))"
+		if [[ "${!HOSTS_POS}" == "$HOST" ]]; then
+			_rport_set_marginal "${!PATHS_POS}" || return 1
+		fi
 	done
 
-	for host in "${RPORTS_HOSTS[@]}"; do
-		if [[ "$host" == "$HOST" ]]; then
-			_rport_check_host Marginal "$host" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" || return 1
+	# check if all links are of expected state on hosts
+	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
+		HOSTS_POS="$(( RPORTS_CNT + PATHS_POS ))"
+		if [[ "${!HOSTS_POS}" == "$HOST" ]]; then
+			_rport_check_opt "${!PATHS_POS}" "Marginal" || return 1
 		else
-			_rport_check_host Online "$host" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" || return 1
+			_rport_check_opt "${!PATHS_POS}" "Online" || return 1
 		fi
 	done
 }
@@ -405,14 +376,26 @@ test_set_two_optimized_online() {
 
 run_test() {
 	local IOPOLICY=$1 # "numa" "queue-depth" "round-robin"
-	local -a RPORTS_PATHS=( $2 ) # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
-	local -a RPORTS_HOSTS=( $3 ) # host1 host2
+	shift
+	local RPORTS_CNT="$(( $# / 2 ))"
+	local -a RPORTS_PATHS # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+	local -a RPORTS_HOSTS # host1 host2
+	local PATHS_POS # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+	local HOSTS_POS # host1 host2
+
+	# recrate the arrays
+	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
+		HOSTS_POS+="$(( RPORTS_CNT + PATHS_POS ))"
+		RPORTS_PATHS+=("${!PATHS_POS}")
+		RPORTS_HOSTS+=("${!HOSTS_POS}")
+	done
+
 
 	echo Changing FC links to online
 	# Initial check to see if FC is operational and set ports to online
 	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[@]}" && echo "Set all online: pass" || echo "Set all online: fail"
 
-	test_set_one_host_marginal "${RPORTS_HOSTS[0]}" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}" && echo "One host marginal: pass" || echo "One host marginal: fail"
+	test_set_one_host_marginal "${RPORTS_HOSTS[0]}" "${RPORTS_PATHS[@]}" "${RPORTS_HOSTS[@]}" && echo "One host marginal: pass" || echo "One host marginal: fail"
 	test_set_all_marginal "${RPORTS_PATHS[@]}" && echo "All marginal: pass" || echo "All marginal: fail"
 
 	test_set_one_non_optimized_online "${RPORTS_PATHS[@]}" && echo "One remote non-optimized online: pass" || echo "One remote non-optimized online: fail"
