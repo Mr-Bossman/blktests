@@ -350,7 +350,7 @@ test_set_all_non_one_optimized_online() {
 
 	# Set one optimized online
 	# First set one optimized online to online then check non-optimized paths
-	set_one_optimized_online "${RPORTS_PATHS[*]}" || return 1
+	set_one_optimized_online "${RPORTS_PATHS[@]}" || return 1
 
 	# Check non-optimized paths
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
@@ -366,7 +366,7 @@ test_set_one_optimized_online() {
 
 	# Set one optimized online
 	# First set one optimized online to online then check non-optimized paths
-	set_one_optimized_online "${RPORTS_PATHS[*]}" || return 1
+	set_one_optimized_online "${RPORTS_PATHS[@]}" || return 1
 
 	# Check non-optimized paths
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
