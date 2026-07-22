@@ -19,59 +19,6 @@ set_conditions() {
 	_set_nvme_trtype "$@"
 }
 
-_wait_for_ctrl_state() {
-	local def_state_timeout=5
-	local nvmedev="$1"
-	local state="$2"
-	local timeout="${3:-$def_state_timeout}"
-	local state_file
-	local start_time
-	local end_time
-
-	state_file="/sys/class/nvme/${nvmedev}/state"
-
-	start_time=$(date +%s)
-	until grep -q "${state}" "${state_file}"; do
-		sleep 1
-		end_time=$(date +%s)
-		if (( end_time - start_time > timeout )); then
-			echo "expected state \"${state}\" not " \
-				"reached within ${timeout} seconds"
-			return 1
-		fi
-	done
-
-	return 0
-}
-
-#we need to filter these
-_subsys_get_rports() {
-	local SUBSYS=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3
-
-	printf "%s\n" "$SUBSYS"/nvme* | grep -Eo ".*nvme[0-9]+$"
-	# /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
-}
-
-_subsys_host_get_rports() {
-	local SUBSYS=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3
-	local HOST_TRADDR=$2 # nn-0x200000109b5f2957:pn-0x100000109b5f2957
-
-	for subsys_path in $(_subsys_get_rports "$SUBSYS"); do
-		grep -l host_traddr="$HOST_TRADDR" "$subsys_path"/address && echo "$subsys_path" || true
-	done
-	# /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
-}
-
-
-
-
-
-
-
-
-
-
-
 _subsys_rport_addr() {
 	local RPORT=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 
@@ -483,14 +430,21 @@ run_test() {
 	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "All online: pass" || echo "All online: fail"
 }
 
+_subsys_get_rports() {
+	local SUBSYS=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3
+
+	_find_nvme_devs "${def_subsysnqn}"
+	# /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+}
+
 run_tests() {
-	#local DEVPATH=$1 # /dev/nvme3n1
-	#local DEVNAME
-	#local DEV_SUBSYS
-	#local SUBSYS
-	local SUBSYS_PATH=$(_find_nvme_subsys "${def_subsysnqn}")
-	local RPORTS_PATHS=$(_find_nvme_devs "${def_subsysnqn}")
-	local RPORTS_HOSTS=( "host1" "host1" "host1" "host1" )
+	local SUBSYS_PATH="$1"
+	local RPORTS_PATHS=$(_subsys_get_rports "$SUBSYS_PATH")
+	local -a RPORTS_HOSTS
+
+	for rport in $RPORTS_PATHS; do
+		RPORTS_HOSTS+=("$(_get_fc_host_port $rport)")
+	done
 
 	#DEVNAME=$(basename "$DEVPATH") # nvme3n1
 	#DEV_SUBSYS=$(printf "%s\n" "$PATH_SYSFS_NVME_SUBSYSTEM"/*/* | grep "$DEVNAME") # /sys/class/nvme-subsystem/nvme-subsys3/nvme3n1
@@ -570,7 +524,7 @@ test() {
 	fio_pid=$!
 	sleep 5
 
-	run_tests
+	run_tests $(_find_nvme_subsys "${def_subsysnqn}")
 
 	# Stop background I/O
 	echo "Stopping background I/O"
