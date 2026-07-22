@@ -194,27 +194,29 @@ test_set_all_online() {
 test_set_one_host_marginal() {
 	local HOST=$1 # host1
 	shift
+	local ARGS=("$@")
 	local RPORTS_CNT="$(( $# / 2 ))"
 	local PATHS_POS # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 	local HOSTS_POS # host1 host2
 
 	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
 		HOSTS_POS="$(( RPORTS_CNT + PATHS_POS ))"
-		if [[ "${!HOSTS_POS}" == "$HOST" ]]; then
-			_rport_set_marginal "${!PATHS_POS}" || return 1
+		if [[ "${ARGS[$HOSTS_POS]}" == "$HOST" ]]; then
+			_rport_set_marginal "${ARGS[$PATHS_POS]}" || return 1
 		fi
 	done
 
 	# check if all links are of expected state on hosts
 	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
 		HOSTS_POS="$(( RPORTS_CNT + PATHS_POS ))"
-		if [[ "${!HOSTS_POS}" == "$HOST" ]]; then
-			_rport_check_opt "${!PATHS_POS}" "Marginal" || return 1
+		if [[ "${ARGS[$HOSTS_POS]}" == "$HOST" ]]; then
+			_rport_check_opt "${ARGS[$PATHS_POS]}" "Marginal" || return 1
 		else
-			_rport_check_opt "${!PATHS_POS}" "Online" || return 1
+			_rport_check_opt "${ARGS[$PATHS_POS]}" "Online" || return 1
 		fi
 	done
 }
+
 
 # Check if one of the marginal paths is in use
 _rport_check_one_use_marginal() {
@@ -377,6 +379,7 @@ test_set_two_optimized_online() {
 run_test() {
 	local IOPOLICY=$1 # "numa" "queue-depth" "round-robin"
 	shift
+	local ARGS=("$@")
 	local RPORTS_CNT="$(( $# / 2 ))"
 	local -a RPORTS_PATHS # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 	local -a RPORTS_HOSTS # host1 host2
@@ -386,8 +389,8 @@ run_test() {
 	# recrate the arrays
 	for (( PATHS_POS=0; PATHS_POS < RPORTS_CNT; PATHS_POS++ )); do
 		HOSTS_POS+="$(( RPORTS_CNT + PATHS_POS ))"
-		RPORTS_PATHS+=("${!PATHS_POS}")
-		RPORTS_HOSTS+=("${!HOSTS_POS}")
+		RPORTS_PATHS+=("${ARGS[$PATHS_POS]}")
+		RPORTS_HOSTS+=("${ARGS[$HOSTS_POS]}")
 	done
 
 
@@ -439,7 +442,7 @@ run_tests() {
 	for IOPOLICY in $IOPOLICYS; do
 		_rport_set_iopolicy "$SUBSYS_PATH" "$IOPOLICY"
 		echo "Testing iopolicy: $IOPOLICY"
-		run_test "$IOPOLICY" "${RPORTS_PATHS[*]}" "${RPORTS_HOSTS[*]}"
+		run_test "$IOPOLICY" "${RPORTS_PATHS[@]}" "${RPORTS_HOSTS[@]}"
 	done
 }
 
