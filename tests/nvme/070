@@ -430,20 +430,27 @@ run_test() {
 	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[*]}" && echo "All online: pass" || echo "All online: fail"
 }
 
-_subsys_get_rports() {
-	local SUBSYS=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3
+_nvmet_get_rport() {
+	local PORT="$1"
 
-	_find_nvme_devs "${def_subsysnqn}"
-	# /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+	local dev
+	for dev in /sys/class/nvme/nvme*; do
+		[ -e "$dev" ] || continue
+		dev="$(basename "$dev")"
+		grep -l traddr="$(_fc_traddr $PORT)" "/sys/class/nvme/"$dev"/address" && echo "$dev" || true
+	done
+	# nvme9
 }
 
 run_tests() {
 	local SUBSYS_PATH="$1"
-	local RPORTS_PATHS=$(_subsys_get_rports "$SUBSYS_PATH")
+	local PORTS=( $2 )
+	local -a RPORTS_PATHS
 	local -a RPORTS_HOSTS
 
-	for rport in $RPORTS_PATHS; do
-		RPORTS_HOSTS+=("$(_get_fc_host_port $rport)")
+	for port in $PORTS; do
+		RPORTS_HOSTS+=("$(_get_fc_host_port $port)")
+		RPORTS_PATHS+=( "${SUBSYS_PATH}/$(_nvmet_get_rport $port)")
 	done
 
 	#DEVNAME=$(basename "$DEVPATH") # nvme3n1
@@ -462,19 +469,6 @@ run_tests() {
 	done
 }
 
-_find_nvme_devs() {
-	local subsys=$1
-	local subsysnqn
-	local dev
-	for dev in /sys/class/nvme/nvme*; do
-		[ -e "$dev" ] || continue
-		subsysnqn="$(cat "${dev}/subsysnqn" 2>/dev/null)"
-		if [[ "$subsysnqn" == "$subsys" ]]; then
-			echo "$dev"
-		fi
-	done
-}
-
 _find_nvme_subsys() {
 	local subsys=$1
 	local subsysnqn
@@ -484,6 +478,7 @@ _find_nvme_subsys() {
 		subsysnqn="$(cat "${subsys_path}/subsysnqn" 2>/dev/null)"
 		if [[ "$subsysnqn" == "$subsys" ]]; then
 			echo "$subsys_path"
+			return
 		fi
 	done
 }
@@ -524,7 +519,7 @@ test() {
 	fio_pid=$!
 	sleep 5
 
-	run_tests $(_find_nvme_subsys "${def_subsysnqn}")
+	run_tests $(_find_nvme_subsys "${def_subsysnqn}") "${ports[*]}"
 
 	# Stop background I/O
 	echo "Stopping background I/O"
