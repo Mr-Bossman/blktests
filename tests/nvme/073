@@ -1,0 +1,91 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0+
+# Copyright (C) 2026 Jesse Taube
+#
+# Test for ccr/CQT
+
+. tests/nvme/rc
+
+DESCRIPTION="ccr/cqt"
+
+requires() {
+	_nvme_requires
+	_have_loop
+	_have_debugfs
+	#_have_kernel_options NVME_TARGET_DELAY_REQUESTS
+	_require_nvme_trtype_is_fabrics
+	_require_nvme_trtype tcp
+}
+
+set_conditions() {
+	_set_nvme_trtype "$@"
+}
+
+delay_admin_op() {
+	local port=$1
+	local count=$2
+	local msec="${3:30}"
+	local op="${4:-0x1}"
+	local subsysnqn="${5:-$def_subsysnqn}"
+
+	local dfs_path="${NVMET_DFS}/${subsysnqn}"
+
+	echo "${count} ${msec} 0x1ff ${op}" > "${dfs_path}/ctrl${port}/delay"
+}
+
+delay_io_op() {
+	local port=$1
+	local count=$2
+	local msec="${3:30}"
+	local op="${4:-0x1}"
+	local subsysnqn="${5:-$def_subsysnqn}"
+
+	local dfs_path="${NVMET_DFS}/${subsysnqn}"
+
+	echo "${count} ${msec} ${op} 0x1ff" > "${dfs_path}/ctrl${port}/delay"
+}
+
+# get all messages from dmesg since the start of the test
+get_dmesg() {
+	echo hi
+}
+
+test() {
+	local fio_pid
+	local -a ports
+	local port
+	local ns
+
+	echo "Running ${TEST_NAME}"
+
+	_setup_nvmet
+
+	_nvmet_target_setup --ports 2
+
+	for port in "${ports[@]}"; do
+		_nvme_connect_subsys --port "${port}" --no-wait-ns
+	done
+
+
+	# start fio job
+	ns=$(_find_nvme_ns "$def_subsys_uuid")
+	set -m
+	_run_fio_verify_io --filename="/dev/${ns}" \
+			   --group_reporting --ramp_time=5 \
+			   --time_based --runtime=5m &> "$FULL" &
+	set +m
+	fio_pid=$!
+	sleep 5
+
+	_get_nvmet_ports "${def_subsysnqn}" ports
+	# delay 5 ops for 1000ms, 3 is nvme write
+	delay_io_op "${ports[0]}" 5 1000 3
+
+	{ kill -- -"${fio_pid}"; wait; } &> /dev/null
+
+	_nvme_disconnect_subsys
+
+	_nvmet_target_cleanup
+
+	echo "Test complete"
+}
