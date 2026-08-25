@@ -84,7 +84,7 @@ test_set_all_marginal_except_inaccesable()  {
 	else
 		for subsys_path in "${RPORTS_PATHS[@]}"; do
 			# Only optimized paths will be in use
-			_rport_check_use_opt "$subsys_path" Marginal || return 1
+			_rport_check_use_opt "$subsys_path" || return 1
 		done
 	fi
 }
@@ -102,7 +102,7 @@ test_set_all_marginal() {
 	else
 		for subsys_path in "${RPORTS_PATHS[@]}"; do
 			# Only optimized paths will be in use
-			_rport_check_use_opt "$subsys_path" Marginal || return 1
+			_rport_check_use_opt "$subsys_path" || return 1
 		done
 	fi
 }
