@@ -66,6 +66,29 @@ test_set_one_host_marginal() {
 	done
 }
 
+test_set_all_marginal_except_inaccesable()  {
+	local -a RPORTS_PATHS=("$@") # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	for subsys_path in "${RPORTS_PATHS[@]}"; do
+		if _rport_is_inaccessible "$subsys_path"; then
+			_rport_set_online "$subsys_path" || return 1
+			_rport_check_online "$subsys_path" Online || return 1
+			continue
+		fi
+		_rport_set_marginal "$subsys_path" || return 1
+		_rport_check_online "$subsys_path" Marginal || return 1
+	done
+
+	if [ "$IOPOLICY" == "numa" ]; then
+		_rport_check_one_use marginal "${def_check_timeout}" "${RPORTS_PATHS[@]}" || return 1
+	else
+		for subsys_path in "${RPORTS_PATHS[@]}"; do
+			# Only optimized paths will be in use
+			_rport_check_use_opt "$subsys_path" Marginal || return 1
+		done
+	fi
+}
+
 test_set_all_marginal() {
 	local -a RPORTS_PATHS=("$@") # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 
@@ -248,6 +271,9 @@ run_test() {
 	test_set_one_host_marginal "${RPORTS_HOSTS[0]}" "${RPORTS_PATHS[@]}" \
 		"${RPORTS_HOSTS[@]}" && echo "One host marginal: pass" \
 		|| echo "One host marginal: fail"
+	test_set_all_marginal_except_inaccesable "${RPORTS_PATHS[@]}" \
+		&& echo "All marginal except inaccessible: pass" \
+		|| echo "All marginal except inaccessible: fail"
 	test_set_all_marginal "${RPORTS_PATHS[@]}" \
 		&& echo "All marginal: pass" || echo "All marginal: fail"
 
@@ -264,6 +290,9 @@ run_test() {
 	test_set_all_online "$IOPOLICY" "${RPORTS_PATHS[@]}" \
 		&& echo "Set all online: pass" || echo "Set all online: fail"
 
+	test_set_all_marginal_except_inaccesable "${RPORTS_PATHS[@]}" \
+		&& echo "All marginal except inaccessible: pass" \
+		|| echo "All marginal except inaccessible: fail"
 	test_set_all_marginal "${RPORTS_PATHS[@]}" \
 		&& echo "All marginal: pass" || echo "All marginal: fail"
 
