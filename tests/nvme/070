@@ -7,7 +7,7 @@
 . tests/nvme/rc
 
 DESCRIPTION="test nvme-fc marginal path handling"
-
+TIME
 requires() {
 	_nvme_requires
 	_have_loop
@@ -30,7 +30,7 @@ test_set_all_online() {
 	done
 
 	if [ "$IOPOLICY" == "numa" ]; then
-		_rport_check_one_use online "${RPORTS_PATHS[@]}" || return 1
+		_rport_check_one_use online "${def_check_timeout}" "${RPORTS_PATHS[@]}" || return 1
 	else
 		for subsys_path in "${RPORTS_PATHS[@]}"; do
 			# Only optimized paths will be in use
@@ -75,7 +75,7 @@ test_set_all_marginal() {
 	done
 
 	if [ "$IOPOLICY" == "numa" ]; then
-		_rport_check_one_use marginal "${RPORTS_PATHS[@]}" || return 1
+		_rport_check_one_use marginal "${def_check_timeout}" "${RPORTS_PATHS[@]}" || return 1
 	else
 		for subsys_path in "${RPORTS_PATHS[@]}"; do
 			# Only optimized paths will be in use

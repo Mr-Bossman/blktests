@@ -16,7 +16,7 @@ def_local_wwnn="0x10001100aa000001"
 def_local_wwpn="0x20001100aa000001"
 def_hostid="0f01fb42-9f7f-4856-b0b3-51e60b8de349"
 def_hostnqn="nqn.2014-08.org.nvmexpress:uuid:${def_hostid}"
-def_check_timeout=10
+export def_check_timeout=10
 export def_subsysnqn="blktests-subsystem-1"
 export def_subsys_uuid="91fdba0d-f87b-4c25-b80f-db7be1418b9e"
 export def_nsid="1"
@@ -443,7 +443,7 @@ _rport_check() {
 # Check if one of the paths is in use
 _rport_check_one_use() {
 	local STATE=$1
-	local -i TIMEOUT="${2:-$def_check_timeout}"
+	local -i TIMEOUT=$2
 	shift
 	shift
 	local -a RPORTS_PATHS=("$@") #  /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
