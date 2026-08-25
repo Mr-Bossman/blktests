@@ -91,7 +91,7 @@ test_set_one_non_optimized_online() {
 	# First set one non-optimized online to online then check optimized paths
 	local next_marginal=0
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
-		if ! _rport_is_optimized "$subsys_path"; then
+		if _rport_is_non_optimized "$subsys_path"; then
 			if [ $next_marginal == 1 ]; then
 				_rport_check "$subsys_path" Marginal || return 1
 				break
@@ -107,6 +107,10 @@ test_set_one_non_optimized_online() {
 			# Optimized paths will not be in use
 			_rport_check "$subsys_path" Marginal || return 1
 		fi
+		if _rport_is_no_use "$subsys_path"; then
+			# Inaccessible paths will not be in use
+			_rport_check "$subsys_path" Marginal || return 1
+		fi
 	done
 }
 
@@ -120,7 +124,7 @@ test_set_all_non_optimized_online() {
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
 		if _rport_is_optimized "$subsys_path"; then
 			_rport_check "$subsys_path" Marginal || return 1
-		else
+		elif _rport_is_non_optimized "$subsys_path"; then
 			_rport_set_online "$subsys_path" || return 1
 			if [ "$IOPOLICY" == "numa" ] && [ $numa_in_use == 0 ]; then
 				_rport_check "$subsys_path" Online || return 1
@@ -132,6 +136,9 @@ test_set_all_non_optimized_online() {
 			else
 				_rport_check "$subsys_path" Online || return 1
 			fi
+		else
+			# Inaccessible paths will not be in use
+			_rport_check "$subsys_path" Marginal || return 1
 		fi
 	done
 }
@@ -166,6 +173,7 @@ test_set_all_non_one_optimized_online() {
 		if ! _rport_is_optimized "$subsys_path"; then
 			_rport_check_online "$subsys_path" Online || return 1
 			# Only optimized paths will be in use
+			# Inaccessible and non-optimized paths will not be in use
 			_rport_check_use "$subsys_path" Marginal || return 1
 		fi
 	done
@@ -182,6 +190,7 @@ test_set_one_optimized_online() {
 	for subsys_path in "${RPORTS_PATHS[@]}"; do
 		if ! _rport_is_optimized "$subsys_path"; then
 			# Only optimized paths will be in use
+			# Inaccessible and non-optimized paths will not be in use
 			_rport_check "$subsys_path" "Marginal" || return 1
 		fi
 	done
@@ -331,8 +340,8 @@ test() {
 	local -a ports
 	local ns
 	local fio_pid
-	local -i first_host1=0
-	local -i first_host2=0
+	local -i host1_port_cnt=0
+	local -i host2_port_cnt=0
 
 	echo "Running ${TEST_NAME}"
 
@@ -344,25 +353,51 @@ test() {
 		return 1
 	fi
 
-	_nvmet_target_setup --ports 2
-	_nvmet_target_add_ports --host_port 1 --ports 2
+	_nvmet_target_setup --ports 4
+	_nvmet_target_add_ports --host_port 1 --ports 4
 
 	_get_nvmet_ports "${def_subsysnqn}" ports
 
 	for port in "${ports[@]}"; do
-		_setup_nvmet_port_ana "${port}" 1 "non-optimized"
 		if [[ $(_get_fc_host_port "${port}") == 0 ]]; then
-			if [ $first_host1 -eq 1 ]; then
-				continue
-			fi
-			first_host1=1
-		else
-			if [ $first_host2 -eq 1 ]; then
-				continue
-			fi
-			first_host2=1
+			continue
 		fi
-		_setup_nvmet_port_ana "${port}" 1 "optimized"
+
+		if [ $host2_port_cnt -eq 0 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "optimized"
+		fi
+		if [ $host2_port_cnt -eq 1 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "non-optimized"
+		fi
+		if [ $host2_port_cnt -eq 2 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "inaccessible"
+		fi
+		if [ $host2_port_cnt -eq 3 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "persistant-loss"
+		fi
+
+		host2_port_cnt=$((host2_port_cnt + 1))
+	done
+
+	for port in "${ports[@]}"; do
+		if [[ $(_get_fc_host_port "${port}") != 0 ]]; then
+			continue
+		fi
+
+		if [ $host1_port_cnt -eq 0 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "optimized"
+		fi
+		if [ $host1_port_cnt -eq 1 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "non-optimized"
+		fi
+		if [ $host1_port_cnt -eq 2 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "inaccessible"
+		fi
+		if [ $host1_port_cnt -eq 3 ]; then
+			_setup_nvmet_port_ana "${port}" 1 "persistant-loss"
+		fi
+
+		host1_port_cnt=$((host1_port_cnt + 1))
 	done
 
 	for port in "${ports[@]}"; do

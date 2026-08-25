@@ -270,6 +270,14 @@ _rport_in_use_raw() {
 	# Returns exit code 0 if in use, 1 if not in use
 }
 
+_rport_is_optimized() {
+	local SUBSYS_PATH=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# there should only be one "nvme3c9n1"
+	[[ "$(cat "$SUBSYS_PATH"/nvme*/ana_state)" == "optimized" ]]
+	# Returns exit code 0 if optimized, 1 if not optimized
+}
+
 _rport_is_non_optimized() {
 	local SUBSYS_PATH=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 
@@ -286,6 +294,21 @@ _rport_is_inaccessible() {
 	# Returns exit code 0 if inaccessible, 1 if not inaccessible
 }
 
+_rport_is_persistent_loss() {
+	local SUBSYS_PATH=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	# there should only be one "nvme3c9n1"
+	[[ "$(cat "$SUBSYS_PATH"/nvme*/ana_state)" == "persistent-loss" ]]
+	# Returns exit code 0 if persistent-loss, 1 if not persistent-loss
+}
+
+_rport_is_no_use() {
+	local SUBSYS_PATH=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+
+	_rport_is_inaccessible "$SUBSYS_PATH" || return 1
+	_rport_is_persistent_loss "$SUBSYS_PATH" || return 1
+	# Returns exit code 0 if inaccessible or persistent-loss, 1 if not
+}
 _rport_is_online() {
 	local RPORT=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
 	local -i TIMEOUT="${2:-$def_check_timeout}"
