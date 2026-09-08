@@ -197,6 +197,27 @@ wait_for_dmesg() {
 	return 1
 }
 
+test_injecting_delay_ccr_recovery() {
+	if ! ${UBLK_PROG} inject -n 0 -o write -d 4 -c 1 >> "$FULL" 2>&1; then
+		echo "FAIL: can not inject write delay"
+	fi
+
+
+	ns=$(_find_nvme_ns "${def_subsys_uuid}")
+	"$SRCDIR/nvme-ghost-write" "/dev/${ns}"
+
+	# The injected delay is within the limits that
+	# CCR can handle. Expect fencing to start and
+	# CCR to succeed.
+	if ! wait_for_dmesg "starting controller fencing" 30; then
+		echo "FAIL: controller fencing did not start"
+	fi
+
+	if ! wait_for_dmesg "CCR succeeded using nvme" 30; then
+		echo "FAIL: cross controller reset did not succeed"
+	fi
+}
+
 test() {
 	echo "Running ${TEST_NAME}"
 
@@ -233,23 +254,7 @@ test() {
 
 	set_io_timeout_of_subsystem "${def_subsysnqn}" 2000
 
-	if ! ${UBLK_PROG} inject -n 0 -o write -d 4 -c 1 >> "$FULL" 2>&1; then
-		echo "FAIL: can not inject write delay"
-	fi
-
-	ns=$(_find_nvme_ns "${def_subsys_uuid}")
-	"$SRCDIR/nvme-ghost-write" "/dev/${ns}"
-
-	# The injected delay is within the limits that
-	# CCR can handle. Expect fencing to start and
-	# CCR to succeed.
-	if ! wait_for_dmesg "starting controller fencing" 30; then
-		echo "FAIL: controller fencing did not start"
-	fi
-
-	if ! wait_for_dmesg "CCR succeeded using nvme" 30; then
-		echo "FAIL: cross controller reset did not succeed"
-	fi
+	test_injecting_delay_ccr_recovery
 
 	_nvme_disconnect_subsys
 	_nvmet_target_cleanup
