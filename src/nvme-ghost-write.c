@@ -24,7 +24,6 @@ int main(int argc, char **argv)
 	int fd, i, w, off, ret;
 	char *buff;
 
-	/* Just return for now */
 	fprintf(stdout, "starting %s test program\n", basename(argv[0]));
 
 	if (argc < 2) {
