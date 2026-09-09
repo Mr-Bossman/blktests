@@ -70,8 +70,8 @@ int main(int argc, char **argv)
 
 		for (off = 0; off < BUF_SIZE; off++) {
 			if (buff[off] != WRITE_COUNT - 1) {
-				fprintf(stderr, "validation failed\n");
-				exit(1);
+				fprintf(stdout, "validation failed\n");
+				goto out;
 			}
 		}
 
@@ -79,8 +79,8 @@ int main(int argc, char **argv)
 		sleep(DELAY);
 	}
 
-	fprintf(stdout, "finished %s test program\n", basename(argv[0]));
 out:
+	fprintf(stdout, "finished %s test program\n", basename(argv[0]));
 	close(fd);
 	return ret;
 }
