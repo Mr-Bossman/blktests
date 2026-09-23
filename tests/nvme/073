@@ -45,9 +45,26 @@ delay_io_op() {
 	echo "${count} ${msec} ${op} 0x1ff" > "${dfs_path}/ctrl${port}/delay"
 }
 
-# get all messages from dmesg since the start of the test
-get_dmesg() {
-	echo hi
+_find_nvme_subsys() {
+	local subsys=$1
+	local subsysnqn
+	local subsys_path
+	for subsys_path in /sys/class/nvme-subsystem/nvme-subsys*; do
+		[ -e "$subsys_path" ] || continue
+		subsysnqn="$(cat "${subsys_path}/subsysnqn" 2>/dev/null)"
+		if [[ "$subsysnqn" == "$subsys" ]]; then
+			echo "$subsys_path"
+			return
+		fi
+	done
+}
+
+_rport_set_iopolicy() {
+	local RPORT=$1 # /sys/devices/virtual/nvme-subsystem/nvme-subsys3/nvme9
+	local POLICY=$2 # numa queue-depth round-robin
+
+	echo "$POLICY" | sudo tee "$RPORT"/iopolicy > /dev/null
+	# Returns none
 }
 
 test() {
@@ -61,6 +78,8 @@ test() {
 	_setup_nvmet
 
 	_nvmet_target_setup --ports 2
+
+	_get_nvmet_ports "${def_subsysnqn}" ports
 
 	for port in "${ports[@]}"; do
 		_nvme_connect_subsys --port "${port}" --no-wait-ns
@@ -77,9 +96,13 @@ test() {
 	fio_pid=$!
 	sleep 5
 
-	_get_nvmet_ports "${def_subsysnqn}" ports
-	# delay 5 ops for 1000ms, 3 is nvme write
-	delay_io_op "${ports[0]}" 5 1000 3
+	_rport_set_iopolicy "$(_find_nvme_subsys "${def_subsysnqn}")" round-robin
+
+	# delay 5 ops for 30000ms, 3 is nvme write
+	delay_io_op "${ports[0]}" 5 30000 3
+
+	sleep 30
+	_dmesg_since_test_start | grep Reconnecting
 
 	{ kill -- -"${fio_pid}"; wait; } &> /dev/null
 
