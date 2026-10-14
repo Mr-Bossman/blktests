@@ -1,0 +1,23 @@
+Running nvme/072
+Testing iopolicy: numa
+Port is optimized: pass
+Port is in use: pass
+Port is non-optimized: pass
+Port is in use: pass
+Port is inaccessible: pass
+Port is offline: pass
+Testing iopolicy: queue-depth
+Port is optimized: pass
+Port is in use: pass
+Port is non-optimized: pass
+Port is in use: pass
+Port is inaccessible: pass
+Port is offline: pass
+Testing iopolicy: round-robin
+Port is optimized: pass
+Port is in use: pass
+Port is non-optimized: pass
+Port is in use: pass
+Port is inaccessible: pass
+Port is offline: pass
+Test complete

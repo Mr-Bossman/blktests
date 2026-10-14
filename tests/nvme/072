@@ -1,0 +1,129 @@
+#!/bin/bash
+# SPDX-License-Identifier: GPL-3.0+
+# Copyright (C) 2026 Jesse Taube <jtaubepe@redhat.com>
+#
+# Test nvme fabrics I/O policies with a single path and various ANA states.
+
+. tests/nvme/rc
+
+DESCRIPTION="Test single path I/O policies"
+
+requires() {
+	_nvme_requires
+	_have_loop
+	_have_fio
+	_require_nvme_trtype_is_fabrics
+}
+
+set_conditions() {
+	_set_nvme_trtype "$@"
+}
+
+check_ana_states() {
+	local SUBSYS_PATH="$1"
+	local PORT="$2"
+	local rport
+
+	rport="${subsys_path}/$(_nvmet_get_rport ${PORT})"
+
+	# Test for optimized ana_state
+	_setup_nvmet_port_ana "${PORT}" 1 "optimized"
+	sleep 1
+	_rport_is_optimized "${rport}" \
+		&& echo "Port is optimized: pass" \
+		|| echo "Port ${rport} is not optimized: fail"
+	_rport_check_use "${rport}" "Online" \
+		&& echo "Port is in use: pass" \
+		|| echo "Port ${rport} is not in use: fail"
+
+	# Test for optimized ana_state
+	_setup_nvmet_port_ana "${PORT}" 1 "non-optimized"
+	sleep 1
+	_rport_is_non_optimized "${rport}" \
+		&& echo "Port is non-optimized: pass" \
+		|| echo "Port ${rport} is not non-optimized: fail"
+	_rport_check_use "${rport}" "Online" \
+		&& echo "Port is in use: pass" \
+		|| echo "Port ${rport} is not in use: fail"
+
+	# Test for inaccessible ana_state
+	_setup_nvmet_port_ana "${PORT}" 1 "inaccessible"
+	sleep 1
+	_rport_is_inaccessible "${rport}" \
+		&& echo "Port is inaccessible: pass" \
+		|| echo "Port ${rport} is not inaccessible: fail"
+	_rport_check_use "${rport}" "Offline" \
+		&& echo "Port is offline: pass" \
+		|| echo "Port ${rport} is not offline: fail"
+
+
+	# Set back to optimized ana_state so I/O can continue
+	_setup_nvmet_port_ana "${PORT}" 1 "optimized"
+}
+
+_nvmet_get_rport() {
+	local PORT="$1"
+
+	local dev
+	for dev in /sys/class/nvme/nvme*; do
+		grep --quiet "io" "$dev/cntrltype" || continue
+		[ -e "$dev" ] || continue
+		dev="$(basename "$dev")"
+		grep --quiet traddr="$(_fc_traddr "$PORT")" "/sys/class/nvme/$dev/address" && echo "$dev" || true
+	done
+	# nvme9
+}
+
+_find_nvme_subsys() {
+	local subsys=$1
+	local subsysnqn
+	local subsys_path
+	for subsys_path in /sys/class/nvme-subsystem/nvme-subsys*; do
+		[ -e "$subsys_path" ] || continue
+		subsysnqn="$(cat "${subsys_path}/subsysnqn" 2>/dev/null)"
+		if [[ "$subsysnqn" == "$subsys" ]]; then
+			echo "$subsys_path"
+			return
+		fi
+	done
+}
+
+test() {
+	local fio_pid
+	local subsys_path
+	local ns
+
+	echo "Running ${TEST_NAME}"
+
+	_setup_nvmet
+
+	_nvmet_target_setup --ports 1
+
+	_nvme_connect_subsys --port 0 --no-wait-ns
+
+	# start fio job
+	ns=$(_find_nvme_ns "$def_subsys_uuid")
+	set -m
+	_run_fio_verify_io --filename="/dev/${ns}" \
+			   --group_reporting --ramp_time=5 \
+			   --time_based --runtime=1m &> "$FULL" &
+	set +m
+	fio_pid=$!
+	sleep 5
+
+	subsys_path=$(_find_nvme_subsys "${def_subsysnqn}")
+
+	local IOPOLICYS="numa queue-depth round-robin"
+	for IOPOLICY in $IOPOLICYS; do
+		_rport_set_iopolicy "$subsys_path" "$IOPOLICY"
+		echo "Testing iopolicy: $IOPOLICY"
+		check_ana_states "$subsys_path" 0
+	done
+
+	{ kill -- -"${fio_pid}"; wait; } &> /dev/null
+
+	_nvme_disconnect_subsys
+	_nvmet_target_cleanup
+
+	echo "Test complete"
+}
